@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AlphaBot line follower</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 1rem auto; max-width: 680px; background:#111; color:#eee; padding:0 .5rem; }
+  h1 { font-size: 1.3rem; }
+  .card { background:#1e1e1e; border-radius:8px; padding:1rem; margin-bottom:1rem; }
+  .row { display:flex; justify-content:space-between; font-size:.9rem; }
+  button { font-size:1rem; padding:.6rem 1rem; border:0; border-radius:6px; cursor:pointer; margin:0 .5rem .5rem 0; color:#fff; }
+  #follow { background:#2a7; } #test { background:#27a; } #cal { background:#555; }
+  #stop { background:#c22; width:100%; margin-top:.5rem; padding:1rem; font-weight:bold; }
+  #log { font-family:monospace; font-size:.8rem; height:130px; overflow:auto; background:#000; padding:.5rem; white-space:pre-wrap; }
+  .warnbox { background:#5a3a00; padding:.6rem; border-radius:6px; font-size:.9rem; margin-bottom:.6rem; }
+  .bar { height: 14px; background:#333; border-radius:4px; overflow:hidden; position:relative; }
+  .fill { height:100%; background:#3a9; width:0; }
+  #conn { font-size:.8rem; color:#999; }
+  .badge { padding:.15rem .6rem; border-radius:10px; font-size:.85rem; background:#444; }
+  .badge.follow { background:#2a7; } .badge.test { background:#27a; } .badge.idle { background:#666; }
+  canvas { width:100%; background:#000; border-radius:6px; display:block; }
+</style>
+</head>
+<body>
+<h1>AlphaBot <span id="conn">(connecting...)</span> <span id="mode" class="badge idle">-</span></h1>
+
+<div class="card">
+  <b>Line detection</b> <small>(dark line, IR1 = left)</small>
+  <canvas id="vis" width="640" height="220"></canvas>
+  <div class="row" style="margin-top:.4rem"><span id="linestate">-</span><span id="posval">-</span></div>
+  <div class="row" style="margin-top:.2rem"><span id="rawvals">-</span><span id="motors">-</span></div>
+</div>
+
+<div class="card">
+  <b>Control</b>
+  <p>Speed: <input type="range" id="speed" min="10" max="80" value="35"> <span id="speedv">35%</span>
+     &nbsp; <label><input type="checkbox" id="boost"> Boost to 100% (default limit 80%)</label></p>
+  <button id="follow">Start line follower</button>
+  <button id="test">Start motor test</button>
+  <button id="cal">Reset calibration</button>
+  <div class="warnbox">Motor test: lift the robot so the wheels are free.</div>
+  <p>Test: <span id="tstate">-</span> | Step: <span id="tstep">-</span> | PWM cap: <span id="cap">-</span></p>
+  <div class="bar"><div class="fill" id="prog"></div></div>
+  <button id="stop">STOP</button>
+</div>
+
+<div class="card">
+  <b>Battery</b>
+  <div class="row"><span id="bat">-</span><span id="batwarn" style="color:#e84"></span></div>
+</div>
+
+<div class="card"><b>Log</b><div id="log"></div></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const logEl = $("log");
+function log(m){ const t=new Date().toLocaleTimeString(); logEl.textContent += `${t} ${m}\n`; logEl.scrollTop = logEl.scrollHeight; }
+
+let connected = null;
+function setConn(ok, msg) {
+  $("conn").textContent = ok ? "(connected)" : "(" + msg + ")";
+  if (ok !== connected) { log(ok ? "connected" : msg); connected = ok; }
+}
+async function req(path, method) {
+  try { const r = await fetch(path, { method: method || "POST" }); return await r.json(); }
+  catch (e) { log("request failed: " + e); }
+}
+async function pushSettings() {
+  await req(`/settings?speed=${$("speed").value}&boost=${$("boost").checked}`, "GET");
+}
+
+// ---- visualization ----
+const cv = $("vis"), ctx = cv.getContext("2d");
+function draw(s) {
+  const W = cv.width, H = cv.height;
+  ctx.clearRect(0, 0, W, H);
+  const n = 5, gap = W / n;
+  const cx = i => gap * (i + 0.5);
+  // line "road" under the sensors: darkness-weighted
+  ctx.fillStyle = "#222"; ctx.fillRect(0, 70, W, 70);
+  // estimated line position (-2..2 -> x)
+  if (s.found) {
+    const lx = W / 2 + s.position * gap;
+    ctx.fillStyle = "#555"; ctx.fillRect(lx - 14, 70, 28, 70);
+    ctx.strokeStyle = "#fc3"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(lx, 55); ctx.lineTo(lx, 150); ctx.stroke();
+  }
+  for (let i = 0; i < n; i++) {
+    const st = s.strength[i] / 100;
+    // circle: green = dark (line), dark grey = bright floor
+    const g = Math.round(60 + st * 195);
+    ctx.fillStyle = `rgb(${Math.round(40 * (1 - st))},${g},${Math.round(80 * st + 40)})`;
+    ctx.beginPath(); ctx.arc(cx(i), 105, 26, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = st > 0.35 ? "#fff" : "#666"; ctx.lineWidth = 2; ctx.stroke();
+    ctx.fillStyle = "#fff"; ctx.font = "13px sans-serif"; ctx.textAlign = "center";
+    ctx.fillText("IR" + (i + 1), cx(i), 40);
+    ctx.fillText(s.sensors[i], cx(i), 108);
+    // strength bar below
+    ctx.fillStyle = "#333"; ctx.fillRect(cx(i) - 25, 160, 50, 10);
+    ctx.fillStyle = "#3a9"; ctx.fillRect(cx(i) - 25, 160, 50 * st, 10);
+  }
+  // position scale
+  ctx.strokeStyle = "#666"; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(gap * 0.5, 195); ctx.lineTo(gap * 4.5, 195); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(W / 2, 188); ctx.lineTo(W / 2, 202); ctx.stroke();
+  if (s.found) {
+    ctx.fillStyle = "#fc3"; ctx.beginPath();
+    const px = W / 2 + s.position * gap;
+    ctx.moveTo(px, 192); ctx.lineTo(px - 8, 210); ctx.lineTo(px + 8, 210); ctx.fill();
+  }
+}
+
+let lastKey = null;
+function onState(s) {
+  draw(s);
+  $("mode").textContent = s.mode; $("mode").className = "badge " + s.mode;
+  $("linestate").textContent = s.found ? "line detected" : "no line";
+  $("posval").textContent = s.found ? "position " + s.position.toFixed(2) + " (-2 L ... +2 R)" : "-";
+  $("rawvals").textContent = "raw: " + s.sensors.join(" ");
+  $("motors").textContent = `motors L ${Math.round(s.motor_l/2.55)}% R ${Math.round(s.motor_r/2.55)}%`;
+  $("bat").textContent = `${s.battery_v.toFixed(2)} V (raw ${s.battery_raw})`;
+  $("batwarn").textContent = s.battery_v < 7.0 ? "LOW (<7.0 V)" : "";
+  $("tstate").textContent = s.test;
+  $("tstep").textContent = s.mode === "test" ? `${s.step}/${s.total} ${s.step_name}${s.pause ? " (pause)" : ""}` : "-";
+  $("cap").textContent = Math.round(s.pwm_cap/255*100) + "%";
+  $("prog").style.width = s.mode === "test" ? (s.step/s.total*100)+"%" : (s.test==="done"?"100%":"0%");
+  const key = s.mode + "/" + s.test + "/" + s.step_name;
+  if (key !== lastKey) { log(`mode ${s.mode}, test ${s.test}${s.mode==="test" ? ", step "+s.step+" "+s.step_name : ""}`); lastKey = key; }
+}
+
+async function poll() {
+  try {
+    const r = await fetch("/state", { cache: "no-store" });
+    const s = await r.json();
+    if (s.error) setConn(false, s.error); else { setConn(true); onState(s); }
+  } catch (e) { setConn(false, "disconnected"); }
+}
+setInterval(poll, 150);
+
+$("speed").oninput = () => { $("speedv").textContent = $("speed").value + "%"; };
+$("boost").onchange = () => {
+  $("speed").max = $("boost").checked ? 100 : 80;
+  if ($("speed").value > $("speed").max) { $("speed").value = $("speed").max; $("speedv").textContent = $("speed").value + "%"; }
+};
+$("follow").onclick = async () => {
+  if ($("boost").checked && !confirm("Boost to 100% motor power. Continue?")) return;
+  await pushSettings(); await req("/follow/start"); log("follower start requested");
+};
+$("test").onclick = async () => {
+  if ($("boost").checked && !confirm("Boost to 100% motor power. Continue?")) return;
+  await pushSettings(); await req("/test/start"); log("motor test requested");
+};
+$("cal").onclick = async () => { await req("/cal/reset"); log("calibration reset"); };
+$("stop").onclick = async () => { await req("/stop"); log("STOP"); };
+</script>
+</body>
+</html>

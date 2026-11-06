@@ -1,0 +1,6 @@
+name: folloq
+description: https://www.waveshare.com/wiki/AlphaBot
+ports: []
+bricks:
+- arduino:web_ui: {}
+icon: 🛼
