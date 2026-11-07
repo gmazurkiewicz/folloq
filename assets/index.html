@@ -18,7 +18,10 @@
   .fill { height:100%; background:#3a9; width:0; }
   #conn { font-size:.8rem; color:#999; }
   .badge { padding:.15rem .6rem; border-radius:10px; font-size:.85rem; background:#444; }
-  .badge.follow { background:#2a7; } .badge.test { background:#27a; } .badge.idle { background:#666; }
+  .badge.manual { background:#a72; } .badge.follow { background:#2a7; } .badge.test { background:#27a; } .badge.idle { background:#666; }
+  .wheel { display:flex; align-items:center; gap:.5rem; margin:.4rem 0; }
+  .wheel b { width:3.5rem; } .wheel input[type=range] { flex:1; } .wheel .val { width:7.5rem; text-align:right; font-family:monospace; font-size:.85rem; }
+  #mzero { background:#555; } #mfwd { background:#2a7; } #mrev { background:#a72; } #mspinl, #mspinr { background:#27a; }
   canvas { width:100%; background:#000; border-radius:6px; display:block; }
 </style>
 </head>
@@ -43,6 +46,23 @@
   <p>Test: <span id="tstate">-</span> | Step: <span id="tstep">-</span> | PWM cap: <span id="cap">-</span></p>
   <div class="bar"><div class="fill" id="prog"></div></div>
   <button id="stop">STOP</button>
+</div>
+
+<div class="card">
+  <b>Manual wheel control</b>
+  <div class="warnbox">Lift the robot so the wheels are free. Motors stop if this page stops sending commands. Limit is 80% unless Boost is checked.</div>
+  <div class="wheel"><b>Left</b><input type="range" id="ml" min="-80" max="80" value="0" step="5"><span class="val" id="mlv">0%</span></div>
+  <div class="wheel"><b>Right</b><input type="range" id="mr" min="-80" max="80" value="0" step="5"><span class="val" id="mrv">0%</span></div>
+  <label><input type="checkbox" id="mlink"> Link wheels (same speed &amp; direction)</label>
+  <p>
+    <button id="mfwd">Both fwd</button>
+    <button id="mrev">Both rev</button>
+    <button id="mspinl">Spin left</button>
+    <button id="mspinr">Spin right</button>
+    <button id="mzero">Zero</button>
+  </p>
+  <button id="mgo" style="background:#a72">Start manual drive</button>
+  <small>Slider: negative = backward, positive = forward.</small>
 </div>
 
 <div class="card">
@@ -114,6 +134,7 @@ function draw(s) {
 let lastKey = null;
 function onState(s) {
   draw(s);
+  if (manualOn && s.mode !== "manual" && s.mode !== "idle") setManualOn(false);
   $("mode").textContent = s.mode; $("mode").className = "badge " + s.mode;
   $("linestate").textContent = s.found ? "line detected" : "no line";
   $("posval").textContent = s.found ? "position " + s.position.toFixed(2) + " (-2 L ... +2 R)" : "-";
@@ -151,8 +172,46 @@ $("test").onclick = async () => {
   if ($("boost").checked && !confirm("Boost to 100% motor power. Continue?")) return;
   await pushSettings(); await req("/test/start"); log("motor test requested");
 };
+// ---- manual drive ----
+let manualOn = false, manualTimer = null;
+const fmtWheel = v => v == 0 ? "stopped" : `${Math.abs(v)}% ${v > 0 ? "fwd" : "rev"}`;
+function updManualLabels() { $("mlv").textContent = fmtWheel(+$("ml").value); $("mrv").textContent = fmtWheel(+$("mr").value); }
+async function sendManual() {
+  await req(`/manual?left=${$("ml").value}&right=${$("mr").value}`, "GET");
+}
+function setManual(l, r) {
+  $("ml").value = l; $("mr").value = r; updManualLabels();
+  if (manualOn) sendManual();
+}
+function setManualOn(on) {
+  manualOn = on;
+  $("mgo").textContent = on ? "Stop manual drive" : "Start manual drive";
+  clearInterval(manualTimer);
+  if (on) { sendManual(); manualTimer = setInterval(sendManual, 400); }
+}
+$("ml").oninput = () => { if ($("mlink").checked) $("mr").value = $("ml").value; updManualLabels(); if (manualOn) sendManual(); };
+$("mr").oninput = () => { if ($("mlink").checked) $("ml").value = $("mr").value; updManualLabels(); if (manualOn) sendManual(); };
+$("boost").addEventListener("change", () => {
+  const m = $("boost").checked ? 100 : 80;
+  for (const id of ["ml", "mr"]) { $(id).min = -m; $(id).max = m; }
+  updManualLabels();
+  if (manualOn) pushSettings().then(sendManual);
+});
+const mp = () => Math.min(50, +$("ml").max);
+$("mfwd").onclick = () => setManual(mp(), mp());
+$("mrev").onclick = () => setManual(-mp(), -mp());
+$("mspinl").onclick = () => setManual(-mp(), mp());
+$("mspinr").onclick = () => setManual(mp(), -mp());
+$("mzero").onclick = () => setManual(0, 0);
+$("mgo").onclick = async () => {
+  if (manualOn) { setManualOn(false); await req("/stop"); log("manual drive stopped"); return; }
+  if ($("boost").checked && !confirm("Boost to 100% motor power. Continue?")) return;
+  await pushSettings(); setManualOn(true); log("manual drive started");
+};
+updManualLabels();
+
 $("cal").onclick = async () => { await req("/cal/reset"); log("calibration reset"); };
-$("stop").onclick = async () => { await req("/stop"); log("STOP"); };
+$("stop").onclick = async () => { setManualOn(false); setManual(0, 0); await req("/stop"); log("STOP"); };
 </script>
 </body>
 </html>

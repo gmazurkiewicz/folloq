@@ -4,12 +4,15 @@
 #include <Arduino_RouterBridge.h>
 
 // ---------------- Pins (from docs/AlphaBot_Pinout.md) ----------------
-#define PIN_ENA   5    // left motor PWM
-#define PIN_ENB   6    // right motor PWM
-#define PIN_IN1   A0   // left  motor
-#define PIN_IN2   A1
-#define PIN_IN3   A2   // right motor
-#define PIN_IN4   A3
+// Measured on the robot: L298P channel A (ENA, IN1/IN2) drives the physical RIGHT wheel,
+// channel B (ENB, IN3/IN4) drives the physical LEFT wheel. On both channels the wheel turns
+// forward when IN2 / IN3 is high (IN1 / IN4 high = backward).
+#define PIN_ENA   5    // right motor PWM
+#define PIN_ENB   6    // left motor PWM
+#define PIN_IN1   A0   // right motor backward
+#define PIN_IN2   A1   // right motor forward
+#define PIN_IN3   A2   // left motor forward
+#define PIN_IN4   A3   // left motor backward
 #define PIN_ADC_CS    10
 #define PIN_ADC_CLK   13
 #define PIN_ADC_ADDR  12   // MCU -> TLC1543 address input
@@ -25,6 +28,7 @@
 #define STEP_MS            1500
 #define PAUSE_MS           500
 #define WATCHDOG_MS        2000    // motors stop if Python stops polling
+#define MANUAL_TIMEOUT_MS  1000    // manual drive stops if the UI stops refreshing the command
 #define LOG_PERIOD_MS      1000
 #define SAMPLE_MS          20
 
@@ -40,7 +44,7 @@
 #define SEARCH_SPEED_PCT   30
 
 // ---------------- Modes ----------------
-enum Mode { M_IDLE, M_FOLLOW, M_TEST };
+enum Mode { M_IDLE, M_FOLLOW, M_TEST, M_MANUAL };
 enum TestState { T_NONE, T_RUNNING, T_DONE, T_ABORTED };
 
 static Mode mode = M_FOLLOW;            // follower runs by default
@@ -48,8 +52,10 @@ static TestState testState = T_NONE;
 static int  pwmCap = PWM_CAP_NORMAL;
 static bool boostEnabled = false;
 static int  speedPct = DEFAULT_SPEED_PCT;
-static unsigned long lastPollMs = 0;
-static bool everPolled = false;
+static volatile unsigned long lastPollMs = 0;
+static volatile bool everPolled = false;
+static volatile int  manualL = 0, manualR = 0;   // signed %, -100..100
+static volatile unsigned long lastManualMs = 0;
 
 // ---------------- Sensors ----------------
 static uint16_t sensors[NUM_SENSORS];
@@ -101,8 +107,8 @@ static void driveLR(int l, int r) {
   if (l > pwmCap) l = pwmCap; if (l < -pwmCap) l = -pwmCap;
   if (r > pwmCap) r = pwmCap; if (r < -pwmCap) r = -pwmCap;
   cmdL = l; cmdR = r;
-  setMotor(PIN_ENA, PIN_IN1, PIN_IN2, l);
-  setMotor(PIN_ENB, PIN_IN3, PIN_IN4, r);
+  setMotor(PIN_ENB, PIN_IN3, PIN_IN4, l);
+  setMotor(PIN_ENA, PIN_IN2, PIN_IN1, r);
 }
 
 static void motorsStop() {
@@ -200,9 +206,14 @@ static void followTick() {
   driveLR(l, r);
 }
 
+// ---------------- Manual drive ----------------
+static void manualTick() {
+  driveLR(manualL * 255 / 100, manualR * 255 / 100);   // driveLR clamps to pwmCap
+}
+
 // ---------------- Test state machine ----------------
 static const char* modeName() {
-  switch (mode) { case M_FOLLOW: return "follow"; case M_TEST: return "test"; default: return "idle"; }
+  switch (mode) { case M_FOLLOW: return "follow"; case M_TEST: return "test"; case M_MANUAL: return "manual"; default: return "idle"; }
 }
 static const char* testName() {
   switch (testState) {
@@ -262,7 +273,7 @@ static void testTick() {
 }
 
 // ---------------- Bridge handlers ----------------
-// mode(0 idle,1 follow,2 test),testState(0 none,1 running,2 done,3 aborted),step,pause, s1..s5, n1..n5 (0-100), pos(milli), found,
+// mode(0 idle,1 follow,2 test,3 manual),testState(0 none,1 running,2 done,3 aborted),step,pause, s1..s5, n1..n5 (0-100), pos(milli), found,
 // cmdL, cmdR, batRaw, batMv, cap, speed
 static String getState() {
   lastPollMs = millis();
@@ -316,6 +327,23 @@ static String followStart(int speed, bool boost) {
   return "ok";
 }
 
+// Manual wheel control: signed percent per wheel (+ = forward). Must be refreshed within MANUAL_TIMEOUT_MS.
+static String manualDrive(int l, int r, bool boost) {
+  applyBoost(boost);
+  int lim = boost ? 100 : 80;
+  if (l > lim) l = lim; if (l < -lim) l = -lim;
+  if (r > lim) r = lim; if (r < -lim) r = -lim;
+  if (mode != M_MANUAL) {
+    if (mode == M_TEST) testState = T_ABORTED;
+    motorsStop();
+    mode = M_MANUAL;
+    Monitor.print("[MANUAL] start, cap="); Monitor.println(pwmCap);
+  }
+  manualL = l; manualR = r;
+  lastManualMs = millis();
+  return "ok";
+}
+
 // Stops everything (both test and follower) and goes idle
 static String stopAll() {
   Monitor.println("[STOP] idle");
@@ -345,6 +373,7 @@ void setup() {
   Bridge.provide("get_state", getState);
   Bridge.provide("test_start", testStart);
   Bridge.provide("follow_start", followStart);
+  Bridge.provide("manual_drive", manualDrive);
   Bridge.provide("stop_all", stopAll);
   Bridge.provide("cal_reset", calibrationReset);
 
@@ -364,7 +393,8 @@ void loop() {
     lastSample = now;
     readAll();
 
-    bool alive = everPolled && (now - lastPollMs <= WATCHDOG_MS);
+    // lastPollMs is written by the Bridge thread and may be newer than `now`, so compare signed
+    bool alive = everPolled && ((long)(now - lastPollMs) <= (long)WATCHDOG_MS);
     if (mode != M_IDLE && !alive) {
       // Python side not polling: never drive motors blindly
       if (!wdgTripped) { Monitor.println("[WDG] no poll from Python, motors held off"); wdgTripped = true; }
@@ -372,8 +402,14 @@ void loop() {
       if (mode == M_TEST) finishTest(T_ABORTED);
     } else {
       if (wdgTripped && alive) { Monitor.println("[WDG] Python polling again"); wdgTripped = false; }
+      if (mode == M_MANUAL && (long)(now - lastManualMs) > (long)MANUAL_TIMEOUT_MS) {
+        Monitor.println("[MANUAL] command timeout, stopped");
+        motorsStop();
+        mode = M_IDLE;
+      }
       if (mode == M_FOLLOW) followTick();
       else if (mode == M_TEST) testTick();
+      else if (mode == M_MANUAL) manualTick();
     }
   }
 

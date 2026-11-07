@@ -171,6 +171,7 @@ The manual says to remove the jumpers of unused modules. TLC1543 DOUT and ADDR a
 - `AlphaBot_Config.h` defines `LED_PIN 13` and `ADC_CLOCK_PIN 13`. These collide, and the UNO Q has no D13 LED (its LEDs are on PH10–PH15).
 - The battery comments say 4× NiMH (6.0–8.4 V), but the manual says 2×18650 (7.4 V nominal). Update the thresholds to the real cell chemistry. For 2S Li-ion, 6.0 V empty is too low and would over-discharge the cells.
 - On interrupts: STM32 EXTI lines are shared by pin number. D3 (PB0) and A5 (PC0) both use line 0, so don't use both as interrupts.
+- Motor wiring differs from the manual and `AlphaBot_Config.h`: L298P channel A (ENA, IN1/IN2) drives the **right** wheel, channel B (ENB, IN3/IN4) the **left**, and forward is IN2 / IN3 high. Verified on the robot; see `docs/AlphaBot_Pinout.md` section 5. Don't copy the config's left/right and forward/backward assignment.
 - Motor safety at boot: STM32 pins float before the sketch starts, so add 10 kΩ pull-downs on ENA and ENB (D5 and D6, or at the L298P side) so the motors stay off during reset and flashing. Linux boot takes 20–30 s on the UNO Q, though the MCU is independent of that.
 - Wi-Fi/BT (2.4 GHz) on the UNO Q and an NRF24L01 will interfere with each other if used together.
 

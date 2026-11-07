@@ -108,7 +108,16 @@ Each jumper bank has 6 pins in 3 rows: pin pair `1-2` is the Arduino side, `3-4`
 | 16 / 17 | OUT3 / OUT4 | MotoB |
 | 19 | SENSEB | GND |
 
-Eight SS54 diodes (D1–D8) clamp OUT1–OUT4 to `VIN` and GND. IN1/IN2 drive the left motor, IN3/IN4 the right (manual p.12).
+Eight SS54 diodes (D1–D8) clamp OUT1–OUT4 to `VIN` and GND. The manual (p.12) says IN1/IN2 drive the left motor and IN3/IN4 the right, with forward = IN4 on the right. **The robot does not behave that way** (see below).
+
+**Verified on the robot** (UNO Q sketch, `sketch/sketch.ino`):
+
+| Wheel | Channel | PWM | Forward | Backward |
+|---|---|---|---|---|
+| Right | A (MotoA, OUT1/OUT2) | ENA = D5 | IN2 = A1 high, IN1 low | IN1 = A0 high, IN2 low |
+| Left | B (MotoB, OUT3/OUT4) | ENB = D6 | IN3 = A2 high, IN4 low | IN4 = A3 high, IN3 low |
+
+So channel A is the right wheel and channel B the left wheel, the opposite of the manual. Motor wiring polarity on this unit also makes IN2 / IN3 the forward inputs.
 
 ## 6. TLC1543 10-bit ADC (U: T1)
 
@@ -170,10 +179,10 @@ Battery measurement: `VIN` → R4 10 kΩ → `TA10` → R5 10 kΩ → GND, so `T
 
 | Function | Arduino pin | Matches schematic |
 |---|---|---|
-| Left motor PWM (ENA) | 5 | yes |
-| Left motor IN1 / IN2 | A0 / A1 | yes |
-| Right motor PWM (ENB) | 6 | yes |
-| Right motor forward / backward | A3 / A2 | pins are right (forward = IN4 = A3, per manual p.12), but the config comments call them IN3 / IN4, and the schematic has IN3 = A2, IN4 = A3 |
+| Left motor PWM (ENA) | 5 | pin yes, but on the robot ENA drives the **right** wheel |
+| Left motor IN1 / IN2 | A0 / A1 | pins yes, but they drive the **right** wheel; forward = IN2 |
+| Right motor PWM (ENB) | 6 | pin yes, but on the robot ENB drives the **left** wheel |
+| Right motor forward / backward | A3 / A2 | the config's forward/backward are wrong for this robot: the wheel (left) goes forward on IN3 = A2, backward on IN4 = A3. The config comments also call them IN3 / IN4, and the schematic has IN3 = A2, IN4 = A3 |
 | Left / right encoder | 2 / 3 | yes (CNTL / CNTR) |
 | TLC1543 CS / CLK / ADDR / DOUT | 10 / 13 / 12 / 11 | yes |
 | Battery ADC channel | 5 | **no: schematic says channel 10 (A10)** |

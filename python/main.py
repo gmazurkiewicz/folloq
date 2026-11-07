@@ -13,7 +13,7 @@ _latest = {"error": "no data yet"}
 _settings = {"speed": 35, "boost": False}
 
 
-MODES = ["idle", "follow", "test"]
+MODES = ["idle", "follow", "test", "manual"]
 TEST_STATES = ["none", "running", "done", "aborted"]
 STEP_NAMES = ["Left forward", "Left backward", "Right forward", "Right backward", "Both forward",
               "Both backward", "Spin left", "Spin right", "Ramp forward", "Full 100% fwd"]
@@ -72,6 +72,12 @@ def api_test_start():
     return {"result": call("test_start", _settings["boost"])}
 
 
+def api_manual(left: int = 0, right: int = 0):
+    left = max(-100, min(100, int(left)))
+    right = max(-100, min(100, int(right)))
+    return {"result": call("manual_drive", left, right, _settings["boost"])}
+
+
 def api_stop():
     logger.warning("STOP")
     return {"result": call("stop_all")}
@@ -86,6 +92,7 @@ web_ui.expose_api("GET", "/state", api_state)
 web_ui.expose_api("GET", "/settings", api_settings)  # ?speed=40&boost=false
 web_ui.expose_api("POST", "/follow/start", api_follow_start)
 web_ui.expose_api("POST", "/test/start", api_test_start)
+web_ui.expose_api("GET", "/manual", api_manual)  # ?left=-50&right=50 (signed %, refreshed periodically)
 web_ui.expose_api("POST", "/stop", api_stop)
 web_ui.expose_api("POST", "/cal/reset", api_cal_reset)
 

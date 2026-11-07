@@ -7,13 +7,14 @@ https://www.waveshare.com/wiki/AlphaBot
 
 - **Line follower** runs by default at boot.
 - **Motor test** starts on demand from the web GUI.
+- **Manual drive** sets each wheel's speed and direction from the web GUI.
 - **Web GUI** at `http://<board-ip>:7000`.
 
 ### Architecture
 
 | Part | File | Role |
 |---|---|---|
-| MCU sketch | `sketch/sketch.ino` | TLC1543 read, line algorithm, motors, test, watchdog |
+| MCU sketch | `sketch/sketch.ino` | TLC1543 read, line algorithm, motors, test, manual drive, watchdog |
 | Python | `python/main.py` | Polls MCU over Bridge, serves REST API |
 | Web page | `assets/index.html` | Visualization and controls |
 
@@ -40,10 +41,18 @@ https://www.waveshare.com/wiki/AlphaBot
 - Lift the robot first.
 - Ends in idle.
 
+### Manual drive
+
+- Left and right sliders, -80..+80% (negative = backward); -100..+100% with Boost.
+- Link checkbox keeps both wheels equal; presets: both fwd/rev, spin left/right, zero.
+- The page re-sends the command every 400 ms. The MCU stops if none arrives for 1 s.
+- Lift the robot first.
+
 ### Safety
 
 - Power cap 80% (PWM 204); 100% only via Boost.
 - Motors off if Python stops polling for 2 s.
+- Manual drive stops 1 s after the last command.
 - STOP button sets idle.
 - Motor pins low at boot.
 
@@ -51,7 +60,7 @@ https://www.waveshare.com/wiki/AlphaBot
 
 - Live view: five sensor circles, raw values, strength bars, line marker, position pointer.
 - Also shows motor outputs, battery voltage and a log.
-- Controls: speed, Boost, Start follower, Start motor test, Reset calibration, STOP.
+- Controls: speed, Boost, Start follower, Start motor test, manual wheel sliders, Reset calibration, STOP.
 
 ### REST API
 
@@ -59,6 +68,7 @@ https://www.waveshare.com/wiki/AlphaBot
 |---|---|---|
 | `/state` | GET | Latest state (JSON) |
 | `/settings?speed=40&boost=false` | GET | Set speed and boost |
+| `/manual?left=-50&right=50` | GET | Manual drive, signed % per wheel (refresh at least every 1 s) |
 | `/follow/start` | POST | Start follower |
 | `/test/start` | POST | Start motor test |
 | `/stop` | POST | Idle |
@@ -66,20 +76,21 @@ https://www.waveshare.com/wiki/AlphaBot
 
 ### Bridge (MCU)
 
-`get_state`, `follow_start(speed, boost)`, `test_start(boost)`, `stop_all`, `cal_reset`.
+`get_state`, `follow_start(speed, boost)`, `test_start(boost)`, `manual_drive(left, right, boost)`, `stop_all`, `cal_reset`.
 
 ## Pins (sketch)
 
 | Function | Pin |
 |---|---|
-| Left motor ENA / IN1 / IN2 | D5 / A0 / A1 |
-| Right motor ENB / IN3 / IN4 | D6 / A2 / A3 |
+| Right motor ENA / IN1 / IN2 | D5 / A0 / A1 (forward = IN2 high) |
+| Left motor ENB / IN3 / IN4 | D6 / A2 / A3 (forward = IN3 high) |
 | TLC1543 CS / CLK / ADDR / DOUT | D10 / D13 / D12 / D11 |
 | Line sensors IR1-IR5 | TLC1543 ch 0-4 |
 | Battery | TLC1543 ch 10, 2:1 divider |
 
 ## Learnings
 
+- **Motor channels are swapped versus the pinout doc.** L298P channel A (ENA, IN1/IN2) drives the right wheel and channel B (ENB, IN3/IN4) the left. Forward is IN2 / IN3 high. Confirmed on the robot.
 - **Battery channel is 10**, not 5 as in `alphabot/AlphaBot_Config.h` (see `docs/AlphaBot_Pinout.md`).
 - **`ADC_VREF` = 4.87 V**, measured on TLC1543 (pin 20 vs pin 10).
   - Pin 12 (battery, TA10) vs GND: 4.22 V, so VIN is about 8.44 V.
@@ -98,16 +109,16 @@ https://www.waveshare.com/wiki/AlphaBot
 - **After restart the MCU can take 30-60 s** to answer. "no data from MCU" in that window is normal. If it persists, check the Serial Monitor.
 - **Sensors on a bright floor read about 960-990** (no line, or sensors lifted).
 
-## Not yet verified on hardware
+## Verified on hardware
+
+All tests pass:
 
 - Motor direction and left/right wiring.
-- Sensor order (IR1 = left assumed).
-- Follower behavior on a real line; gains `KP`, `KD` and speed need tuning.
+- Sensor order (IR1 = left) and line detection.
 - Motor test run and the web buttons in a browser.
+- Manual drive from the web GUI.
+- Battery readout.
 
 ## Next steps
 
-- Run the motor test with wheels lifted.
-- Check that the sensors react to a dark line.
-- Tune `KP`, `KD` and speed.
-- Check the battery readout against 8.44 V.
+- Tune `KP`, `KD` and speed on a real track.
