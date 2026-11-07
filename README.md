@@ -81,9 +81,10 @@ https://www.waveshare.com/wiki/AlphaBot
 ## Learnings
 
 - **Battery channel is 10**, not 5 as in `alphabot/AlphaBot_Config.h` (see `docs/AlphaBot_Pinout.md`).
-- **`ADC_VREF` is an assumed 4.6 V.**
-  - The rail is a diode drop below 5 V.
-  - Measure it; battery readout is about 8% off otherwise.
+- **`ADC_VREF` = 4.87 V**, measured on TLC1543 (pin 20 vs pin 10).
+  - Pin 12 (battery, TA10) vs GND: 4.22 V, so VIN is about 8.44 V.
+  - Safe margin: input is below VCC + 0.3 V.
+  - Earlier assumed 4.6 V read the battery about 5% low.
 - **Encoders unused.** D3 is not 5 V safe (see `docs/UNO_Q_on_AlphaBot_compatibility.md`).
 - **Serial Monitor needs `Monitor`**, not `Serial`.
   - Call `Monitor.begin()` before any `Monitor.print`.
@@ -109,4 +110,4 @@ https://www.waveshare.com/wiki/AlphaBot
 - Run the motor test with wheels lifted.
 - Check that the sensors react to a dark line.
 - Tune `KP`, `KD` and speed.
-- Measure the 5 V rail and set `ADC_VREF`.
+- Check the battery readout against 8.44 V.

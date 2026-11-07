@@ -19,7 +19,7 @@
 #define NUM_SENSORS        5
 #define BATTERY_CHANNEL    10      // TA10 (schematic), NOT 5
 #define BATTERY_DIVIDER    2.0f
-#define ADC_VREF           4.6f    // measured 5V rail; adjust after measuring
+#define ADC_VREF           4.87f   // measured: TLC1543 VCC/REF+ (pin 20 vs pin 10)
 #define PWM_CAP_NORMAL     204     // 80% of 255
 #define PWM_CAP_BOOST      255
 #define STEP_MS            1500
