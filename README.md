@@ -122,3 +122,7 @@ All tests pass:
 ## Next steps
 
 - Tune `KP`, `KD` and speed on a real track.
+  - Make them runtime parameters over Bridge/REST and record runs to CSV (see `docs/Agent_workflow.md`, section 6).
+- Get MCU logs without the App Lab Serial Monitor, so they can be read over SSH and saved with each run.
+  - Preferred: forward `Monitor` lines to Python over the Bridge (see `docs/Agent_workflow.md`, section 5).
+- Set up the agent workflow: SSH key access, rsync deploy, `arduino-app-cli` start/stop (see `docs/Agent_workflow.md`).
